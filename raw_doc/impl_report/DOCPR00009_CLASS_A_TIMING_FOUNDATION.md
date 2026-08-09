@@ -23,6 +23,8 @@ The document covers:
 - the 128 kSPS default sample-rate change made in the same window;
 - verification: simulation, builds, and on-hardware evidence;
 - deployment coupling between the repositories;
+- the post-implementation hardening review and its seven fixes
+  (section 13);
 - explicit non-goals and the intended next milestone.
 
 Associated pull requests (all `feat/timing_foundation` → `main`):
@@ -35,6 +37,21 @@ MSAP1_APU  #31  Class A timing foundation: cycle-defined basic blocks,
 MSAP1_WEB  #15  Nominal frequency selection, block-timing display, and
                 simulator/tweak reorganization
 ```
+
+Hardening follow-up (branch `fix/timing_cal_method`, based on the merged
+foundation; see section 13 for the review findings and fixes):
+
+```text
+MSAP1_PL   ddf832e  Latch closed-block nominal frequency with the block
+                    provenance
+MSAP1_APU  10092ac  Harden the timing foundation UTC mapping and block
+                    validation
+MSAP1_RPU / MSAP1_WEB: branches exist, no changes required
+```
+
+This report describes the system **as hardened**; where the hardening
+changed behavior relative to the original foundation, the affected sections
+below reflect the final semantics and section 13 records the deltas.
 
 The short normative summary of the timing model lives at
 `applications/MSAP1_APU/docs/TIMING_MODEL.md`. The per-module register and
@@ -122,32 +139,59 @@ never touched by time sync           attached to measurements via sync points
 ```
 
 The bridge between the domains is a **sync point**: an atomic PL latch of
-the sample counter, bracketed by APU clock reads:
+the sample counter, bracketed by APU clock reads, and bound to the
+metrology configuration that was active when the correlation was taken:
 
 ```text
 TimeSyncPoint {
-    uint64 sample_counter;   // PL measurement domain
-    int64  utc_ns;           // bracket midpoint, CLOCK_REALTIME
-    uint64 uncertainty_ns;   // bracket width + elasticity-FIFO bound
+    uint64 sample_counter;            // PL measurement domain
+    int64  utc_ns;                    // bracket midpoint, CLOCK_REALTIME
+    uint64 uncertainty_ns;            // bracket width + elasticity-FIFO
+                                      //   bound + kernel maxerror
+    uint32 sample_rate_hz;            // rate active at the sync
+    uint32 configuration_generation;  // generation active at the sync
+    bool   utc_synchronized;          // Linux clock externally disciplined
 }
 ```
 
-A UTC timestamp for any sample is derived linearly from the newest sync
-point. When Linux corrects its clock, only the mapping changes; sample
-indices, block boundaries, and record contents are unaffected.
+A UTC timestamp for a sample is derived linearly from the newest sync
+point, **using the sync point's own sample rate**, and only for blocks
+whose configuration generation matches the sync point's. The PL counter is
+free-running across configuration changes, so extrapolating across a
+sample-rate change with a single-rate model would mis-time blocks; instead
+the mapping simply becomes unavailable for the new generation until a
+fresh sync (forced immediately after every successful capture start) — a
+deliberate trade of a short timestampless window for never publishing a
+wrong timestamp. When Linux corrects its clock, only the mapping changes;
+sample indices, block boundaries, and record contents are unaffected.
+
+Every returned timestamp is paired with its uncertainty
+(`UtcEstimate { utc, uncertainty_ns }`), and decoded blocks carry both
+(`utc_start` + `utc_uncertainty_ns`, present or absent together).
 
 ### 2.3 Time quality
 
+`Synchronized` requires **two** conditions, not one: a fresh PL↔Linux
+correlation *and* a Linux clock that is itself externally disciplined
+(read-only `adjtimex(2)`, `STA_UNSYNC` clear). A correlation against a
+free-running wall clock is internally consistent but not trustworthy UTC,
+and is reported as `Unsynchronized` with no timestamps.
+
 ```text
-startup                          -> Unsynchronized
-valid sync point recorded        -> Synchronized
-newest sync older than threshold -> Holdover      (default 30 s = 3 missed
-new sync point                   -> Synchronized   10 s refresh periods)
+startup, or newest sync untrusted     -> Unsynchronized (no utc_start)
+fresh sync + Linux clock disciplined  -> Synchronized
+trusted sync older than threshold     -> Holdover   (default 30 s = 3 missed
+fresh trusted sync again              -> Synchronized       10 s refreshes)
 ```
+
+During `Holdover`, timestamps are still produced with the last known
+uncertainty (a drift model is future work); during `Unsynchronized` they
+are absent.
 
 Time quality is **metadata**. An unavailable or degraded UTC mapping never
 marks the electrical measurement invalid; `MeasurementQuality` (per channel)
-and `TimeQuality` (per block) are independent fields.
+and `TimeQuality` (per block) are independent fields — as is the third,
+separate concept of Class A aggregation eligibility (section 6.1).
 
 ---
 
@@ -291,7 +335,14 @@ rather than by bookkeeping.
 stable until the next close (comfortably longer than the RMS calculation
 latency, so the result hub always samples coherent values): first sample
 index, cycle count, nominal frequency, and the flags
-`cycle_locked` / `free_run_fallback` / `first_block_after_apply`.
+`cycle_locked` / `free_run_fallback` / `first_block_after_apply`. All of
+these — **including the nominal frequency** — are latched together at the
+block-close event; none is taken from the live active configuration. An
+APPLY landing between a close and the hub consuming the metadata therefore
+cannot relabel the finished block (e.g. a 12-cycle block closed under
+60 Hz can never be reported with a freshly applied 50 Hz nominal). This
+atomicity was a hardening fix — the original implementation drove the
+nominal output from the active configuration (section 13, problem 1).
 
 **Future PQ hooks** (generated and unit-tested, consumed by nothing yet, as
 the milestone required): `cycle_boundary`, `half_cycle_boundary` (from the
@@ -493,8 +544,19 @@ constexpr std::uint16_t cycles_per_basic_block(NominalFrequency);
 struct BlockTiming { /* sequence, generation, first_sample_index,
     sample_count, cycle_count, nominal_frequency, cycle_locked,
     free_run_fallback, first_block_after_apply, time_quality,
-    optional utc_start */ };
+    optional utc_start, optional utc_uncertainty_ns */ };
+[[nodiscard]] constexpr bool class_a_aggregation_eligible(const BlockTiming &);
 ```
+
+`class_a_aggregation_eligible()` is the structural gate the future
+150/180-cycle aggregator will use: the block must be cycle-locked, not a
+free-run fallback, not the first block after an APPLY (conservative —
+current RTL cannot even produce a locked first block, so this is defense in
+depth), and its cycle count must equal `cycles_per_basic_block(nominal)`.
+Fallback blocks remain fully decodable and published for telemetry; they
+are simply not aggregation input. Eligibility never feeds
+`MeasurementQuality` — electrical validity, aggregation eligibility, and
+UTC timing quality are three independent verdicts.
 
 `UpdatePeriod` (with its `ms200` value) was **removed outright** rather than
 extended: a repository-wide search proved `MeterData` had no consumers
@@ -517,6 +579,17 @@ word 1) now registers two decoders:
   `MeasurementPeriod::Basic` without sample-domain timing;
 - `0x00010002` — produces `Basic` plus a fully populated `BlockTiming`.
 
+The v2 decoder validates timing metadata defensively rather than trusting
+the wire: nominal frequency must be 50 or 60; `sample_count` must be
+non-zero; `first_sample_index + sample_count` must not overflow
+`uint64`; and a block flagged `cycle_locked && !free_run_fallback` must
+carry exactly `cycles_per_basic_block(nominal)` cycles (fallback blocks
+may legitimately carry zero or partial cycle counts, so they are exempt
+from the strict rule). A rejected record is counted as invalid at the
+ingest boundary and never becomes a `BasicMeasurementBlock` — and because
+decoding now happens before the WAL append, malformed records never enter
+durable storage either.
+
 `MeterData` remains a storage/publication abstraction; no aggregation logic
 was added.
 
@@ -532,10 +605,21 @@ integer arithmetic.
 The sync source reuses the waveform correlation machinery
 (`WaveformCapture::time_sync()`): a `CLOCK_REALTIME` bracket around the
 existing atomic latch ioctl, midpoint as `utc_ns`, bracket width plus the
-elasticity-FIFO bound as `uncertainty_ns`. `CaptureCoordinator` refreshes
-the sync point every 10 s in its run loop and stamps decoded blocks with
-`time_quality` and `utc_start = utc_for_sample(first_sample_index)` after
-decode. No kernel or ioctl change was required (see section 4.7).
+elasticity-FIFO bound plus the kernel's `maxerror` as `uncertainty_ns`.
+Each sync point additionally records the active sample rate and
+configuration generation, and whether the Linux clock was externally
+disciplined at the time (`adjtimex(2)` via a small header-only helper in
+`apps/acquisition/support/utc_clock.hpp`, so the `msap1::meter` library
+stays syscall-free and unit-testable).
+
+`CaptureCoordinator` refreshes the sync point every 10 s in its run loop
+**and immediately after every successful capture start** — the restart step
+of every configuration-apply path — so the window in which a new
+generation's blocks have no UTC mapping is short. After decode it stamps
+blocks with `time_quality`, `utc_start`, and `utc_uncertainty_ns`
+(`utc_for_sample(first_sample_index, generation)`; nothing is stamped when
+the generation does not match the sync point or the sync is untrusted). No
+kernel or ioctl change was required (see section 4.7).
 
 ### 6.4 Ingest validation
 
@@ -549,9 +633,11 @@ first_sample_index(N+1) == first_sample_index(N) + sample_count(N)
 
 plus the existing sequence-continuity and generation checks. A mismatch is
 counted and logged like a sequence gap and re-baselines, mirroring the
-established gap-handling behavior. The ingestor also took the pre-existing
-`MeterRecordSource` interface in its constructor, which made the new
-continuity behavior unit-testable without device access.
+established gap-handling behavior. Decoder rejections (section 6.2) are
+caught at the same boundary and counted as invalid records. The ingestor
+also took the pre-existing `MeterRecordSource` interface in its
+constructor, which made the new continuity behavior unit-testable without
+device access.
 
 ### 6.5 Settings and wire encoding
 
@@ -744,9 +830,13 @@ the existing configuration transaction: the fallback window (derived
 per-rate on the APU), the crossing-staleness threshold (window/4 in
 samples), and the UTC mapping slope. A rate change bumps the configuration
 generation, restarts block tracking (`first_block_after_apply`), and can
-never produce a block spanning two rates. The one bounded caveat: a sync
-point captured before a rate change extrapolates with the new rate until
-the next 10 s refresh; measurement data is unaffected.
+never produce a block spanning two rates. The originally documented caveat
+— a pre-change sync point extrapolating with the wrong slope until the
+next refresh — was eliminated by the hardening: sync points are bound to
+their configuration generation, cross-generation extrapolation is refused
+outright, and a forced re-sync after capture start closes the gap
+(section 13, problems 2 and 6). Measurement data was never affected either
+way.
 
 ---
 
@@ -772,6 +862,11 @@ Build chain for a release: PL implementation run → new bitstream-inclusive
 XSA → `make_PL.sh && make_mconf.sh && make_RPU.sh && make_yocto.sh`, then
 target procedure section 8.
 
+The hardening branch adds one PL RTL change (the provenance latch), so a
+release including it needs a fresh bitstream as well as the APU package;
+the PL and APU hardening commits are otherwise independently deployable —
+no wire format, register layout, or RPMsg change was involved.
+
 ---
 
 ## 12. Non-goals honored and next milestone
@@ -791,5 +886,98 @@ The next milestone consumes these blocks:
 ```
 
 with the provenance needed for it — block sequence, sample ranges, cycle
-counts, configuration generation, lock flags, and time quality — already
+counts, configuration generation, lock flags, time quality, timestamp
+uncertainty, and a tested `class_a_aggregation_eligible()` gate — already
 proven trustworthy end to end.
+
+---
+
+## 13. Post-implementation hardening (`fix/timing_cal_method`)
+
+After the foundation merged, an independent review raised seven
+correctness/robustness findings. All seven were verified against the code:
+five were confirmed outright, one (problem 1) confirmed with a narrower
+failure window than claimed, and one (problem 7) was already partially
+implemented. None invalidated the architecture; all were fixed on branch
+`fix/timing_cal_method` (PL `ddf832e`, APU `10092ac`; RPU and WEB required
+no changes). The sections above describe the post-fix semantics; this
+section records what changed and why.
+
+### 13.1 Findings and fixes
+
+**P1 — Closed-block nominal frequency was not latched (PL, confirmed).**
+`block_nominal_hz_o` was driven from the live `active_nominal` while the
+other closed-block metadata was latched at close. Verification nuance: the
+reviewer's full scenario ("RMS still processing when APPLY lands") mostly
+could not emit a mixed record because `meter_rms` aborts an in-flight
+calculation on APPLY — but a real 1–2 clock race remained (calculation
+completing on the same edge the APPLY commits), and provenance atomicity
+should not depend on another module's abort behavior. Fixed by latching
+`closed_nominal_hz` with the rest of the provenance at the close event;
+`grid_cycle_timing_tb` now closes a 12-cycle 60 Hz block, applies a 50 Hz
+configuration before the metadata is consumed, and asserts the closed
+block still reports 60 Hz / 12 cycles / original first sample and flags
+while the 50 Hz configuration is active for future blocks only.
+
+**P2 — UTC extrapolation across sample-rate changes (APU, confirmed).**
+This was the caveat already documented in the original report.
+`TimeSyncPoint` now carries `sample_rate_hz` and
+`configuration_generation`; `utc_for_sample()` uses the sync point's own
+rate and returns nothing on a generation mismatch. No piecewise-rate
+timeline was added — a fresh sync restores the mapping instead.
+
+**P3 — `Synchronized` did not require trusted UTC (APU, confirmed as a
+semantics upgrade).** The original state machine implemented the original
+milestone's definition ("valid sync received → Synchronized"), but a
+PL↔`CLOCK_REALTIME` correlation succeeds even against a free-running
+clock. `Synchronized` now additionally requires the kernel clock to be
+externally disciplined (read-only `adjtimex`, `STA_UNSYNC`); an untrusted
+correlation reports `Unsynchronized` with no timestamps, and `Holdover` is
+only reachable from a previously trusted sync. Electrical measurement
+quality remains independent.
+
+**P4 — Uncertainty stored but not propagated (APU, confirmed).**
+`utc_for_sample()` now returns `UtcEstimate { utc, uncertainty_ns }` and
+`BlockTiming` carries `utc_uncertainty_ns` paired with `utc_start`.
+Holdover keeps the last known uncertainty (drift modeling is future work).
+
+**P5 — No aggregation-eligibility rule (APU, confirmed).**
+`class_a_aggregation_eligible()` added and tested (section 6.1), including
+the conservative first-block exclusion. Fallback blocks remain telemetry.
+
+**P6 — Configuration changes must force a fresh mapping (APU, confirmed;
+operational half of P2).** Generation binding invalidates the old sync for
+new blocks automatically; a forced `refresh_time_sync()` at the end of
+every successful capture start (the restart step of all apply paths)
+shortens the timestampless window. The PL counter is never touched.
+
+**P7 — Defensive v2 timing validation (APU, partially pre-existing).** The
+nominal-frequency check (50/60) already existed in the v2 decoder — the
+review missed it. The missing checks were added: non-zero sample count,
+`first + count` uint64 overflow, and the flag-conditional cycle-count rule
+(strict for locked non-fallback blocks, permissive for fallback blocks).
+Rejected records are counted as invalid at the ingest boundary before the
+WAL append.
+
+### 13.2 Hardening verification
+
+- PL: full pipeline suite including the new atomicity scenario, the
+  meter_core integration testbench, and focused synthesis — all PASS.
+- APU: host `ctest` 15/15 with the extended timebase and decoder tests
+  (sync-rate-owned slope, generation mismatch → no timestamp → restored by
+  a new-generation sync, untrusted/trusted/stale/recovered quality
+  transitions, uncertainty propagation, rejection of
+  wrong-cycle-count/zero-sample/overflow records, zero-cycle fallback
+  decode, all five eligibility cases); aarch64 cross build clean.
+- All ten of the review's acceptance criteria are met, including the two
+  that were already true of the foundation (MTR1 v1 stored-stream decoding;
+  counter monotonicity through APPLY, rate changes, capture restart, and
+  UTC correction).
+
+### 13.3 Deferred from the hardening
+
+REST exposure of `utc_uncertainty_ns` (the readings `timing` object carries
+quality but not the numeric bound), PTP/GPS sources, an oscillator drift
+model for holdover uncertainty, and any piecewise historical sample-rate
+conversion — all consciously out of scope, consistent with the review's
+own non-goals.
