@@ -1,0 +1,13 @@
+Fri Aug 14 23:11:15 UTC 2026
+=== health ===
+{"schema":"mnc.response.v1","success":true,"data":{"healthy":false,"full":false,"configuration_generation":3545159487,"meter_configured":true,"meter_generation_match":true,"dc_offset_removal":true,"frequency_arithmetic_ok":true,"rpu_health_age_ms":19653,"health_probe_pending":false,"health_probe_failures":0,"acquisition":{"healthy":false,"running":true,"record_present":true,"record_stale":false,"record_age_ms":23,"records":177665,"dma_bytes":45688832,"dma_read_errors":0,"invalid_records":807,"sequence_gaps":823},"adc":{"healthy":true,"spi_responsive":true,"initialized":true,"configuration_match":true,"rate_match":true,"capture_active":true,"fifo_ok":true,"headers_valid":true,"configured_rate_hz":128000,"measured_drdy_hz":128001,"measured_dclk_hz":8192071,"frames":4281322284,"packets":16723915,"fifo_overflows":0,"header_errors":0,"spi_error":0,"degraded_reasons":[],"registers":[]}}}
+
+=== regs ===
+0x0x24: 0x00028DA9
+0x0x74: 0x00000107
+0x0x7C: 0x00002B93
+0x0x80: 0x00000000
+0x0x84: 0x00000001
+0x0x88: 0x00000000
+0x0x8C: 0x00000000
+0x0x98: 0x00000000
