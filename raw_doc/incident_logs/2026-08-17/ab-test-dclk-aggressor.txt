@@ -1,4 +1,4 @@
-DCLK/DOUT aggressor A/B test — 2026-08-17, device msap1 (172.30.19.99)
+DCLK/DOUT aggressor A/B test — 2026-08-17, device msap1 (ip: xxx.xxx.xxx.xxx)
 ======================================================================
 
 Bitstream md5 1ac891f9a6e830686dc46749fe238590
