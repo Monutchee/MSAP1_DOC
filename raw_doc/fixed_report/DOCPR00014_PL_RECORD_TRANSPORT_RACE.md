@@ -640,6 +640,58 @@ After deploying the kernel module:
   points at consumer stalls, where the historian WAL checkpoint defect
   (FIXRP00001) remains a standing suspect.
 
+### 20.1 Interim field result — 23 h clean (2026-08-17)
+
+First substantive quiet interval since the incident began. Device up
+**23 h 06 m** (booted 2026-08-16 11:21:20 UTC), evidence bundle captured
+before any further deployment in
+`MSAP1_DOC/raw_doc/incident_logs/2026-08-17/soak-evidence-hls-23h.txt`:
+
+| Metric | Value |
+|---|---|
+| Records accepted | 443,690 |
+| `sequence_gaps` / `invalid_records` | **0 / 0** |
+| `meter_sequence_gap`, `meter_record_stale_rejected`, `_config_rejected`, `_decode_rejected`, `meter_sample_range_gap`, `meter_aggregate_sequence_gap` | **0 — all six** |
+| `dma_read_errors` / `fifo_overflows` | 0 / 0 |
+| Block accounting | 27,730 × 15 + 1 ineligible + 10 in flight = 415,961 = `RESULT_SEQ` — **exact** |
+| Loaded PL (portal `developer/about`) | `b691127515589ca98e3be49661e54f2a` |
+
+Against the observed 2.6 episodes/day this is ≈ **90 % confidence** the
+fault is gone (Poisson, λ ≈ 2.5 over 23 h), and ≈ 2.5× the longest
+inter-episode gap ever recorded (9 h 14 m). It is the strongest evidence so
+far that a deployed fix works.
+
+**What it does not yet establish, stated plainly.** Which fix generation is
+loaded could not be pinned from the host: every build artifact was
+regenerated at 2026-08-16 23:38 UTC — twelve hours *after* this boot — so
+the md5 chain proves what is on the device but not which commit produced
+it. The kernel marker fix (`31e802f`, committed 11:08 UTC) predates the
+11:21 UTC boot by thirteen minutes, so it is plausibly loaded, but that is
+inference from timestamps, not measurement. **The falsifiable check in §20
+resolves it in one command** — `produced_blocks − callbacks` should grow
+~20/min — and it is not yet available on the device, because the APU commit
+that surfaces those counters in `mnc meter health`
+(`feat/dma_transport_diagnostics` `b65aa9b`) is **built but not deployed**
+(device `msap1-fpga-acquisition` md5 `3d21d5e9…` vs built `47e7bb84…`).
+Deploying that APU change is therefore the highest-value next step: it
+converts this 23-hour result from "something we changed worked" into
+"the coalescing mechanism is confirmed".
+
+**Revised soak criterion — cumulative, not contiguous.** With one device,
+a 72 h exclusive hold blocks development, and it is not what the statistics
+require. Every historical onset occurred **3 h 24 m to 9 h 14 m after
+boot**, never earlier, so:
+
+- clean hours count only in blocks of **≥ 4 h uptime** (shorter sessions
+  never reach the onset window and contribute nothing);
+- accumulate **72 h across such blocks** on an *unchanged record path* —
+  overnight runs are the productive ones;
+- any deployment that leaves the PL fabric and the APU record-ingestion
+  path byte-identical (diagnostics, ADC/RPU work) **does not reset the
+  count**; a record-path change does.
+
+At 23 h banked: ~90 %. One more overnight (~12 h) → ~98 %. 48 h → ~99.4 %.
+
 **Known observability gap, introduced by the rewrite:** `record_word_tap`
 sits exactly on the `TVALID && TREADY && TLAST` boundary and already detects
 framing violations, but it has no packet counter and its `framing_error_o`
