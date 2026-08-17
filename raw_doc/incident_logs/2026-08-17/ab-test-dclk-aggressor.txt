@@ -1,0 +1,105 @@
+DCLK/DOUT aggressor A/B test — 2026-08-17, device msap1 (172.30.19.99)
+======================================================================
+
+Bitstream md5 1ac891f9a6e830686dc46749fe238590
+MSAP1_PL c1bf5f4 (SCK ratio 32 -> 3.125 MHz), RPU 9dcd385, APU a22f735
+Device uptime at test start ~30 min, boot ~14:40 UTC.
+
+HYPOTHESIS
+  The AD7771's own DCLK/DOUT conversion-data interface couples into the
+  control SPI through the shared 200 mm flying lead, corrupting the address
+  field on SDI.
+
+METHOD
+  In 4-lane DOUT format the AD7771 clocks 64 bits per lane per frame at a
+  fixed DCLK of 8.192 MHz. At 128 kSPS that is 8.192 Mbit/s per lane, i.e.
+  the interface is saturated and DCLK is effectively continuous (~100% duty).
+  Lowering the output data rate keeps DCLK's frequency at 8.192 MHz but makes
+  it bursty, so the aggressor's DUTY CYCLE falls while cable, SCK frequency,
+  pin drive and every ADC register stay identical.
+
+  Each arm: 200 forced register-health sweeps via `mnc meter health --refresh`
+  (97 register reads per sweep; the plain health path returns the APU cache
+  and generates no SPI traffic). Equal wall-clock exposure, 112 s per arm.
+
+  Counters are cumulative since RPU start and were snapshotted immediately
+  before and after each arm. The rate change itself performs a reconfigure,
+  which generates its own SPI traffic; arm B's opening snapshot was taken
+  after that had settled so it is not counted.
+
+
+RAW TRANSCRIPT
+--------------
+
+########## ARM A: 128 kSPS (DCLK ~100% duty) ##########
+  Sample rate:         128000 configured / 128001 measured frame/s
+start: spi_protocol_errors:7 spi_retry_recoveries:7 spi_config_mismatches:1 spi_general_error_1_events:11
+end:   spi_protocol_errors:20 spi_retry_recoveries:20 spi_config_mismatches:3 spi_general_error_1_events:35
+200 sweeps in 112 s
+
+########## switching to 1 kSPS ##########
+  Measured ADC DRDY:    1000 frame/s
+  Result:               match
+  Sample rate:         1000 configured / 1000 measured frame/s
+
+########## ARM B: 1 kSPS (DCLK ~0.8% duty) ##########
+start: spi_protocol_errors:21 spi_retry_recoveries:21 spi_config_mismatches:3 spi_general_error_1_events:36
+end:   spi_protocol_errors:22 spi_retry_recoveries:22 spi_config_mismatches:3 spi_general_error_1_events:37
+200 sweeps in 112 s
+
+########## restoring 128 kSPS ##########
+  Measured ADC DRDY:    128001 frame/s
+  Result:               match
+  Sample rate:         128000 configured / 128001 measured frame/s
+  Acquisition:         healthy (running, record 145 ms old)
+  ADC:                 healthy
+  Data-path errors:    DMA 0, invalid 0, gaps 0, FIFO 0, headers 0
+
+
+RESULT
+------
+
+  metric                    128 kSPS   1 kSPS    ratio    per sweep (A -> B)
+  spi_protocol_errors             13        1      13x     0.065 -> 0.005
+  spi_general_error_1_events      24        1      24x     0.120 -> 0.005
+  spi_config_mismatches            2        0        -     0.010 -> 0.000
+
+  Poisson probability of observing <= arm-B count if the rate were unchanged:
+    protocol errors        P(<=1 | lambda=13) = 3.16e-05
+    GEN_ERR_REG_1 events   P(<=1 | lambda=24) = 9.44e-10
+
+  Retry recoveries tracked protocol errors exactly (7/7, 20/20, 21/21, 22/22)
+  in both arms: every malformed header was recovered, none failed all three
+  attempts.
+
+
+SUPPORTING STATE AT TEST END
+----------------------------
+
+  Bad header buckets:   0x0_=22          (22 of 22 in one nibble bucket)
+  ADC latched SPI errs: SPI_INVALID_READ_ERR, ROM_CRC_ERR   (sticky 0x28)
+  GEN_ERR_REG_1 (live): 0x00             (clear-on-read; sampled per sweep)
+  Header errors:        0                (conversion data path clean)
+  DMA transport:        produced 285, consumed 285, overruns 0,
+                        callbacks 221 (deficit 64), ring 64
+
+  SPI_INVALID_READ_ERR is GEN_ERR_REG_1 bit 3 -- the ADC decoded an INVALID
+  REGISTER ADDRESS off SDI. That places the corruption on the outbound path
+  and explains the single-bucket histogram: an invalid address means the ADC
+  never drives a valid 0010_0000 header, so the received top nibble is always
+  zero.
+
+
+NOTES / CAVEATS
+---------------
+
+- The rate changes restart capture, so the DMA transport soak resets
+  (produced 285 at test end). Not a fault.
+- Ratio is not linear in duty cycle: a ~128x duty reduction gave a 13-24x
+  error reduction. Arm B's residual single event in each metric may be a
+  floor from another source, or from the periodic 30 s audits running
+  alongside the forced sweeps. One event is too few to characterise.
+- ROM_CRC_ERR in the sticky latch is unresolved. The sticky OR is itself
+  accumulated over the corrupting bus, so an address-corrupted read of 0x59
+  could fold in another register's contents as phantom bits. Per-bit counters
+  would separate a one-shot power-up event from a recurring fault.
