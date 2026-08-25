@@ -1,0 +1,47 @@
+# Live register reads, device msap1, 2026-08-25 (SSH + devmem2)
+# All reads only — no state was modified on the device.
+
+$ devmem2 0xFF5E0090 w        # CRL_APB CPU_R5_CTRL
+Read at address  0xFF5E0090 (0xffff9f7d0090): 0x03000200
+  # bit25:24 CLKACT/CLKACT_CORE = 1/1 (clock active)
+  # bits13:8 DIVISOR0           = 0x02
+  # bits2:0  SRCSEL             = 0x0  -> RPLL
+
+$ devmem2 0xFF5E0030 w        # CRL_APB RPLL_CTRL
+Read at address  0xFF5E0030 (0xffffa93bc030): 0x00012D09
+  # bit16    DIV2   = 1
+  # bits14:8 FBDIV  = 0x2D (45)  -> 33.333 MHz x 45 / 2 = 750 MHz config
+  # bit3     BYPASS = 1
+  # bit0     RESET  = 1          -> PLL held in reset AND bypassed
+
+$ devmem2 0xFF5E0038 w        # CRL_APB RPLL_FRAC_CFG
+Read at address  0xFF5E0038 (0xffffb7e52038): 0x00000000
+
+$ devmem2 0xFF5E0040 w        # CRL_APB PLL_STATUS
+Read at address  0xFF5E0040 (0xffff848d0040): 0x00000019
+  # bit0 IOPLL_LOCK   = 1
+  # bit1 RPLL_LOCK    = 0   <- RPLL not locked
+  # bit3 IOPLL_STABLE = 1
+  # bit4 RPLL_STABLE  = 1
+
+$ cat /sys/class/remoteproc/remoteproc*/state
+running
+running
+
+$ grep -iE 'rpll|cpu_r5|acpu' /sys/kernel/debug/clk/clk_summary
+# (debugfs mounted for the read; no cpu_r5 clock is modeled at all)
+                   acpu_mux          0       0        0        1333333320  ...  Y
+                      acpu           0       0        0        1333333320  ...  Y
+    rpll_post_src                    0       0        0        33333333    ...  Y
+    rpll_pre_src                     0       0        0        33333333    ...  Y
+       rpll_int                      0       0        0        1499999985  ...  N   <- enable_count 0, disabled
+          rpll_half                  0       0        0        749999992   ...  Y
+             rpll_int_mux            0       0        0        749999992   ...  Y
+                rpll                 0       0        0        749999992   ...  Y
+                   rpll_to_fpd       0       0        0        25000000    ...  Y
+
+# Reference: hardware-design intent from the exported handoff
+# (yocto-build/build/.hw-description/.../vivado_SDT_out/psu_init.c)
+#   RPLL_CTRL:   FBDIV = 0x40 (64), DIV2 = 1  -> 33.333 x 64 / 2 = 1066.67 MHz
+#   CPU_R5_CTRL: SRCSEL = 0 (RPLL), DIVISOR0 = 2, mask-write 0x01003F07/0x01000200
+#   -> intended R5 clock 533.33 MHz
