@@ -1,0 +1,50 @@
+MSAP1 meter health: PASS
+  Linux acquisition:    yes
+  Meter record present: yes
+  Meter record stale:   no
+  Meter record age:     105 ms
+  RPU health cache age: 17264 ms
+  R5C1 aggregation:     healthy (authoritative)
+  R5C1 health age:      3791 ms
+  R5C1 RPMsg device:    /dev/rpmsg1
+  R5C1 input frames:    133641 received, 133641 valid, 0 invalid
+  R5C1 input sequence:  133641 last, 133642 expected, 0 gap(s), 0 inferred drop(s)
+  R5C1 input errors:    CRC 0, format 0, length 0, FIFO 0, ring 0, ring push 0
+  R5C1 output records:  51960 queued, 51960 emitted, 0 error(s), 0 drop(s)
+  R5C1 completions:     basic 11472, 150/180 764, 10-minute 4, 2-hour 0
+  R5C1 software ring:   0/64 current, 1 high-water, pressure 0
+  R5C1 pressure edges:  warning 0, high 0, critical 0, full 0
+  R5C1 hardware FIFO:   0 current words, 239 high-water, programmable-full edges 0
+  R5C1 input worker:    133648 wakes, 133641 records, max batch 1, max runtime 179 us
+  R5C1 validator:       133641 wakes, 133641 records, max runtime 3779566405 us, max schedule gap 16144 us
+  Health confirmation:  not pending
+  Meter records:        3832
+  DMA bytes:            3633408
+  DMA read errors:      0
+  Invalid records:      0
+  Sequence gaps:        0
+  DMA transport:        produced 14193, consumed 14193, overruns 0, callbacks 14130 (deficit 63), ring 64
+  Configuration gen:    0x5c631962
+  PL generation match:  yes
+  Meter configured:     yes
+  DC offset removal:    yes
+  ADC SPI responsive:   no
+  ADC rate match:       yes
+  Capture active:       yes
+  Sample rate:          128000 frame/s
+  PL frames:            19462614
+  ADC packets:          76025
+  ADC DCLK:             unavailable
+  ADC DRDY:             128000 frame/s
+  FIFO overflows:       0
+  Header errors:        0
+  SPI protocol errors:  0
+  SPI retry recoveries: 0
+  Config mismatches:    0
+  GEN_ERR_REG_1 events: 0
+  Last SPI failure:     register 0x0, header 0x0
+  Conversion status:   0x1
+  Processing status:   0x1
+  Frequency arithmetic: ok
+
+  AD7771 register snapshot: unavailable

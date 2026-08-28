@@ -1,0 +1,15 @@
+BASIC_PREVIOUS,seq=586,count=25600,first=14976002,last=15001601,span=25600,timing=0x10c3c,utc_resync=0
+BASIC,seq=587,count=25600,first=14997335,last=15022934,span=25600,timing=0x90c3c,utc_resync=1
+AGG,seq=40,count=384000,first=14997335,last=15381334,span=384000,first_basic=587,last_basic=601,blocks=15,cycles=180,status=0x16,utc_overlap=0,utc_resync=1,reset=0,ineligible=1,continuity=0
+BASIC_PREVIOUS,seq=3586,count=25600,first=91771732,last=91797331,span=25600,timing=0x10c3c,utc_resync=0
+BASIC,seq=3587,count=25600,first=91797332,last=91822931,span=25600,timing=0x90c3c,utc_resync=1
+AGG,seq=240,count=384000,first=91797332,last=92181331,span=384000,first_basic=3587,last_basic=3601,blocks=15,cycles=180,status=0x16,utc_overlap=0,utc_resync=1,reset=0,ineligible=1,continuity=0
+BASIC_PREVIOUS,seq=6586,count=25600,first=168583831,last=168609430,span=25600,timing=0x10c3c,utc_resync=0
+BASIC,seq=6587,count=25600,first=168598764,last=168624363,span=25600,timing=0x90c3c,utc_resync=1
+AGG,seq=439,count=384000,first=168251031,last=168624363,span=373333,first_basic=6573,last_basic=6587,blocks=15,cycles=180,status=0xe,utc_overlap=1,utc_resync=0,reset=0,ineligible=2,continuity=0
+AGG,seq=440,count=384000,first=168598764,last=168982763,span=384000,first_basic=6587,last_basic=6601,blocks=15,cycles=180,status=0x16,utc_overlap=0,utc_resync=1,reset=0,ineligible=2,continuity=0
+BASIC_PREVIOUS,seq=9586,count=25600,first=245387247,last=245412846,span=25600,timing=0x10a32,utc_resync=0
+BASIC,seq=9587,count=25599,first=245397487,last=245423085,span=25599,timing=0x90a32,utc_resync=1
+AGG,seq=639,count=384000,first=245310447,last=245679086,span=368640,first_basic=9583,last_basic=9597,blocks=15,cycles=150,status=0xe,utc_overlap=1,utc_resync=0,reset=1,ineligible=3,continuity=0
+AGG,seq=640,count=384000,first=245397487,last=245781486,span=384000,first_basic=9587,last_basic=9601,blocks=15,cycles=150,status=0x16,utc_overlap=0,utc_resync=1,reset=1,ineligible=3,continuity=0
+SUMMARY,records=45243,basic=9954,aggregate=665
